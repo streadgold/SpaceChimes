@@ -1,5 +1,6 @@
 from skyfield.api import load, EarthSatellite
 import json
+import random
 from geopy.distance import geodesic
 import numpy as np
 import pyaudio
@@ -8,11 +9,10 @@ from datetime import datetime, timedelta
 import contextlib
 import os
 import sys
+import time
 
+my_location = (29.76303, -95.362061)
 
-mylocation = (29.76303, -95.362061)
-
-# So I dont have to keep looking this up
 note_frequencies = {
     "C0": 16.35, "C#0/Db0": 17.32, "D0": 18.35, "D#0/Eb0": 19.45, "E0": 20.60, "F0": 21.83, "F#0/Gb0": 23.12, "G0": 24.50, "G#0/Ab0": 25.96, "A0": 27.50, "A#0/Bb0": 29.14, "B0": 30.87,
     "C1": 32.70, "C#1/Db1": 34.65, "D1": 36.71, "D#1/Eb1": 38.89, "E1": 41.20, "F1": 43.65, "F#1/Gb1": 46.25, "G1": 49.00, "G#1/Ab1": 51.91, "A1": 55.00, "A#1/Bb1": 58.27, "B1": 61.74,
@@ -25,7 +25,6 @@ note_frequencies = {
     "C8": 4186.01, "C#8/Db8": 4434.92, "D8": 4698.63, "D#8/Eb8": 4978.03, "E8": 5274.04, "F8": 5587.65, "F#8/Gb8": 5919.91, "G8": 6271.93, "G#8/Ab8": 6644.88, "A8": 7040.00, "A#8/Bb8": 7458.62, "B8": 7902.13,
 }
 
-# ALSA error message suppresion - sound generator stuff makes a ton of errors that clogs up the display
 @contextlib.contextmanager
 def ignore_stderr():
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -39,13 +38,59 @@ def ignore_stderr():
         os.dup2(old_stderr, 2)
         os.close(old_stderr)
 
+
 # Sound synthesis functions
-def generate_tone(frequency, duration, volume=0.5, rate=44100):
+def generate_tone(frequency, duration, decay_rate, volume=0.5, rate=44100):
     length = int(duration * rate)
     t = np.linspace(0, duration, length)
-    decay = np.exp(-3 * t)  # Exponential decay
+    decay = np.exp(decay_rate * t)  # Exponential decay
     waveform = (volume * np.sin(2 * np.pi * frequency * t) * decay).astype(np.float32)
     return waveform
+
+def generate_tone_with_reverb(frequency, duration, decay_rate, volume=0.5, rate=44100, reverb_delay=0.05, reverb_decay=0.3):
+    length = int(duration * rate)
+    t = np.linspace(0, duration, length)
+    decay = np.exp(decay_rate * t)
+    waveform = volume * np.sin(2 * np.pi * frequency * t) * decay
+
+    # Calculate the number of samples for the reverb delay
+    delay_samples = int(reverb_delay * rate)
+
+    # Create a reverb effect by adding delayed and attenuated copies of the waveform
+    reverb_waveform = np.zeros_like(waveform)
+    for i in range(1, 5):  # Create multiple echoes for a more complex reverb effect
+        echo_delay = i * delay_samples
+        echo_volume = volume * (reverb_decay ** i)
+        if echo_delay < length:
+            reverb_waveform[:-echo_delay] += waveform[echo_delay:] * echo_volume
+
+    # Mix the original waveform with the reverb waveform
+    mixed_waveform = waveform + reverb_waveform
+    # Ensure the waveform doesn't exceed the original volume
+    mixed_waveform = np.clip(mixed_waveform, -volume, volume)
+
+    return mixed_waveform.astype(np.float32)
+
+def play_combined_sounds(tone_list, rate=44100):
+    """
+    Mixes and plays a list of tones with specified offsets.
+    Each element in tone_list is a tuple (waveform, offset_in_seconds).
+    """
+    # Calculate the total length needed for the combined waveform, considering offsets
+    total_length = max(len(waveform) + int(offset * rate) for waveform, offset in tone_list)
+    combined_waveform = np.zeros(total_length, dtype=np.float32)
+    
+    for waveform, offset in tone_list:
+        start_index = int(offset * rate)
+        end_index = start_index + len(waveform)
+        combined_waveform[start_index:end_index] += waveform[:end_index-start_index]
+    
+    # Normalize to prevent clipping
+    max_val = np.max(np.abs(combined_waveform))
+    if max_val > 1:
+        combined_waveform /= max_val
+    
+    play_sound(combined_waveform)
 
 def play_sound(waveform, rate=44100):
     with ignore_stderr():
@@ -59,7 +104,9 @@ def play_sound(waveform, rate=44100):
 # Function to classify altitude into pitch bins
 def altitude_to_pitch_bin(altitude):
     bins = [0, 400, 800, 1200, 1600, 2000, 10000, 30000]  # km
-    notes = ["G6", "A#6/Bb6", "C7", "D7", "F7", "G7", "A#7/Bb7", "C8"]  # Note names
+    #notes = ["G6", "A#6/Bb6", "C7", "D7", "F7", "G7", "A#7/Bb7", "C8"]  # Note names
+    notes = ["G5", "A#5/Bb5", "C6", "D6", "F6", "G6", "A#6/Bb6", "C7"]  # Note names
+    #notes = ["G3", "A4", "C5", "D5", "E5", "F#5/Gb5", "D6", "F6"]  # Note names
 
     for i, bin_edge in enumerate(bins):
         if altitude <= bin_edge:
@@ -70,15 +117,27 @@ def altitude_to_pitch_bin(altitude):
 # Function to classify RCS into duration bins
 def rcs_to_duration_bin(rcs_size):
     if rcs_size == 'null':
-        return 1
+        duration=2
+        decay_rate=-2
+    elif rcs_size == 'None':
+        duration=2
+        decay_rate=-2
+    elif rcs_size is None:
+        duration=2
+        decay_rate=-2
     elif rcs_size == 'SMALL':
-        return 2
+        duration=2
+        decay_rate=-2
     elif rcs_size == 'MEDIUM':
-        return 4
+        duration=4
+        decay_rate=-1
     elif rcs_size == 'LARGE':
-        return 6
+        duration=8
+        decay_rate=-0.5
     else:
-        return 1  # Default duration
+        duration=2
+        decay_rate=2
+    return duration,decay_rate
 
 ts = load.timescale()
 
@@ -90,31 +149,34 @@ debris_data = load_debris_data()
 next_reload_time = datetime.now() + timedelta(days=1)
 
 while True:
-    current_time = datetime.now()
-    if current_time >= next_reload_time:
+    tone_list = []  # List to store tone data (waveform, offset)
+    if datetime.now() >= next_reload_time:
         debris_data = load_debris_data()
-        next_reload_time = current_time + timedelta(days=1)
+        next_reload_time = datetime.now() + timedelta(days=1)
         print("Reloaded debris data.")
 
-    t = ts.now()
     for debris in debris_data:
-        tle_line1 = debris.get('TLE_LINE1')
-        tle_line2 = debris.get('TLE_LINE2')
-
+        tle_line1, tle_line2 = debris.get('TLE_LINE1'), debris.get('TLE_LINE2')
         if tle_line1 and tle_line2:
             satellite = EarthSatellite(tle_line1, tle_line2)
-            geocentric = satellite.at(t)
-            subpoint = geocentric.subpoint()
-            satellite_loc = (subpoint.latitude.degrees, subpoint.longitude.degrees)
-
-            distance = geodesic(mylocation, satellite_loc).km
-            if distance < 200:
-                altitude_km = subpoint.elevation.km
-                rcs = debris.get('RCS_SIZE', 'null')  # Default to 'null'
+            geocentric = satellite.at(ts.now())
+            distance = geodesic(my_location, (geocentric.subpoint().latitude.degrees, geocentric.subpoint().longitude.degrees)).km
+            
+            if distance < 200: #add all objects within 200km of my location
+                altitude_km = geocentric.subpoint().elevation.km
                 frequency = altitude_to_pitch_bin(altitude_km)
-                duration = rcs_to_duration_bin(rcs)
-                waveform = generate_tone(frequency, duration)
-                play_sound(waveform)
-                print(f"{debris.get('OBJECT_ID')} {debris.get('OBJECT_NAME')} - (RCS: {rcs} , Altitude: {altitude_km:.0f} km , Distance: {distance:.0f} km)")
+                duration, decay_rate = rcs_to_duration_bin(debris.get('RCS_SIZE', 'null'))
+                waveform = generate_tone_with_reverb(frequency, duration, decay_rate)
+
+                offset_by_distance = distance/200
+
+                #tone_list.append((waveform, random.uniform(0, 0.5)))  # Add tone with a random offset
+                tone_list.append((waveform, offset_by_distance))  # Add tone with a random offset
+                print(f"{debris.get('OBJECT_ID')} {debris.get('OBJECT_NAME')} - (RCS: {debris.get('RCS_SIZE')} , Altitude: {altitude_km:.0f} km , Distance: {distance:.0f} km)")
+
+    if tone_list:
+        play_combined_sounds(tone_list)
+    
     print()
-    time.sleep(60)  # Wait 60 seconds before the next update
+    time.sleep(5)
+    

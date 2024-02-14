@@ -10,6 +10,8 @@ import contextlib
 import os
 import sys
 import time
+import board
+import runpy
 
 my_location = (29.76303, -95.362061)
 
@@ -47,6 +49,7 @@ def generate_tone(frequency, duration, decay_rate, volume=0.5, rate=44100):
     waveform = (volume * np.sin(2 * np.pi * frequency * t) * decay).astype(np.float32)
     return waveform
 
+
 def generate_tone_with_reverb(frequency, duration, decay_rate, volume=0.5, rate=44100, reverb_delay=0.05, reverb_decay=0.3):
     length = int(duration * rate)
     t = np.linspace(0, duration, length)
@@ -71,6 +74,7 @@ def generate_tone_with_reverb(frequency, duration, decay_rate, volume=0.5, rate=
 
     return mixed_waveform.astype(np.float32)
 
+
 def play_combined_sounds(tone_list, rate=44100):
     """
     Mixes and plays a list of tones with specified offsets.
@@ -92,6 +96,7 @@ def play_combined_sounds(tone_list, rate=44100):
     
     play_sound(combined_waveform)
 
+
 def play_sound(waveform, rate=44100):
     with ignore_stderr():
         p = pyaudio.PyAudio()
@@ -101,11 +106,12 @@ def play_sound(waveform, rate=44100):
         stream.close()
         p.terminate()
 
+
 # Function to classify altitude into pitch bins
 def altitude_to_pitch_bin(altitude):
     bins = [0, 400, 800, 1200, 1600, 2000, 10000, 30000]  # km
     #notes = ["G6", "A#6/Bb6", "C7", "D7", "F7", "G7", "A#7/Bb7", "C8"]  # Note names
-    notes = ["G5", "A#5/Bb5", "C6", "D6", "F6", "G6", "A#6/Bb6", "C7"]  # Note names
+    notes = ["G4", "A#5/Bb5", "C6", "D6", "F6", "G6", "A#6/Bb6", "C7"]  # Note names
     #notes = ["G3", "A4", "C5", "D5", "E5", "F#5/Gb5", "D6", "F6"]  # Note names
 
     for i, bin_edge in enumerate(bins):
@@ -145,22 +151,39 @@ def load_debris_data():
     with open('debris_data.json', 'r') as file:
         return json.load(file)
 
+runpy.run_path(path_name='getData.py')
 debris_data = load_debris_data()
 next_reload_time = datetime.now() + timedelta(days=1)
 
+#main loop
 while True:
     tone_list = []  # List to store tone data (waveform, offset)
     if datetime.now() >= next_reload_time:
         debris_data = load_debris_data()
         next_reload_time = datetime.now() + timedelta(days=1)
         print("Reloaded debris data.")
-
+     
     for debris in debris_data:
         tle_line1, tle_line2 = debris.get('TLE_LINE1'), debris.get('TLE_LINE2')
-        if tle_line1 and tle_line2:
+        if tle_line1 and tle_line2 and (debris.get('DECAY_DATE') is None or debris.get('DECAY_DATE') == "None"):
             satellite = EarthSatellite(tle_line1, tle_line2)
-            geocentric = satellite.at(ts.now())
-            distance = geodesic(my_location, (geocentric.subpoint().latitude.degrees, geocentric.subpoint().longitude.degrees)).km
+
+            distance = 1000
+            # Need this to handle problem when a satellite has decayed but data set hasn't updated - which causes a NaN result for the lat/long
+            try:
+                geocentric = satellite.at(ts.now())
+            except Exception as e:
+                print("Error encountered " + str(e))
+                print(debris.get('DECAY_DATE'))
+            else:
+                try:
+                    distance = geodesic(my_location, (geocentric.subpoint().latitude.degrees, geocentric.subpoint().longitude.degrees)).km
+                except Exception as e:
+                    print(debris.get('OBJECT_ID'))
+                    print(debris.get('DECAY_DATE'))
+                    print(geocentric.subpoint())
+                    print("Error encountered " + str(e))
+                    
             
             if distance < 200: #add all objects within 200km of my location
                 altitude_km = geocentric.subpoint().elevation.km
@@ -168,9 +191,7 @@ while True:
                 duration, decay_rate = rcs_to_duration_bin(debris.get('RCS_SIZE', 'null'))
                 waveform = generate_tone_with_reverb(frequency, duration, decay_rate)
 
-                offset_by_distance = distance/200
-
-                #tone_list.append((waveform, random.uniform(0, 0.5)))  # Add tone with a random offset
+                offset_by_distance = (distance/200) * 2
                 tone_list.append((waveform, offset_by_distance))  # Add tone with a random offset
                 print(f"{debris.get('OBJECT_ID')} {debris.get('OBJECT_NAME')} - (RCS: {debris.get('RCS_SIZE')} , Altitude: {altitude_km:.0f} km , Distance: {distance:.0f} km)")
 
@@ -179,4 +200,3 @@ while True:
     
     print()
     time.sleep(5)
-    

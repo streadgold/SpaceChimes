@@ -12,6 +12,11 @@ import sys
 import time
 import board
 import runpy
+import serial
+
+arduino_port = '/dev/ttyACM0'  # Serial port for Arduino
+baud_rate = 9600  # Common baud rate for Arduino
+serial_conn = serial.Serial(arduino_port, baud_rate, timeout=1)
 
 my_location = (29.76303, -95.362061)
 
@@ -116,8 +121,8 @@ def altitude_to_pitch_bin(altitude):
 
     for i, bin_edge in enumerate(bins):
         if altitude <= bin_edge:
-            return note_frequencies[notes[i]]
-    return note_frequencies[notes[-1]]  # For altitudes > 30000km
+            return note_frequencies[notes[i]],i-1
+    return note_frequencies[notes[-1]] , 7  # For altitudes > 30000km
 
 
 # Function to classify RCS into duration bins
@@ -162,6 +167,9 @@ while True:
         debris_data = load_debris_data()
         next_reload_time = datetime.now() + timedelta(days=1)
         print("Reloaded debris data.")
+    
+    serial_conn.write(str(999).encode())
+    time.sleep(0.1)
      
     for debris in debris_data:
         tle_line1, tle_line2 = debris.get('TLE_LINE1'), debris.get('TLE_LINE2')
@@ -187,16 +195,19 @@ while True:
             
             if distance < 200: #add all objects within 200km of my location
                 altitude_km = geocentric.subpoint().elevation.km
-                frequency = altitude_to_pitch_bin(altitude_km)
+                frequency, pixelbin = altitude_to_pitch_bin(altitude_km)
                 duration, decay_rate = rcs_to_duration_bin(debris.get('RCS_SIZE', 'null'))
                 waveform = generate_tone_with_reverb(frequency, duration, decay_rate)
-
                 offset_by_distance = (distance/200) * 2
                 tone_list.append((waveform, offset_by_distance))  # Add tone with a random offset
                 print(f"{debris.get('OBJECT_ID')} {debris.get('OBJECT_NAME')} - (RCS: {debris.get('RCS_SIZE')} , Altitude: {altitude_km:.0f} km , Distance: {distance:.0f} km)")
+                serial_conn.write(str(pixelbin).encode())
+                time.sleep(0.1)
 
     if tone_list:
         play_combined_sounds(tone_list)
     
     print()
     time.sleep(5)
+
+serial_conn.close()

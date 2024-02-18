@@ -17,6 +17,7 @@ import serial
 arduino_port = '/dev/ttyACM0'  # Serial port for Arduino
 baud_rate = 9600  # Common baud rate for Arduino
 serial_conn = serial.Serial(arduino_port, baud_rate, timeout=1)
+time.sleep(2)
 
 my_location = (29.76303, -95.362061)
 
@@ -45,6 +46,18 @@ def ignore_stderr():
         os.dup2(old_stderr, 2)
         os.close(old_stderr)
 
+def read_pot_values():
+    try:
+        if serial_conn.inWaiting() > 0:
+            serial_data = serial_conn.readline().decode('utf-8').strip()
+            pot_values = serial_data.split(',')
+            if len(pot_values) == 2:
+                pot_volume = int(pot_values[0])
+                pot_distance = int(pot_values[1])
+                return pot_volume, pot_distance
+    except Exception as e:
+        print(f"Error reading serial data: {e}")
+    return None, None
 
 # Sound synthesis functions
 def generate_tone(frequency, duration, decay_rate, volume=0.5, rate=44100):
@@ -162,8 +175,24 @@ next_reload_time = datetime.now() + timedelta(days=1)
 
 #main loop
 while True:
+    pot_volume, pot_distance = read_pot_values()
+    if pot_volume is not None and pot_distance is not None:
+        # Convert pot values to your needed parameters
+        # Example: Normalize volume (0-1023 from Arduino to 0.0-1.0 for volume)
+        volume = pot_volume / 1023.0
+        # Example: Map distance pot (0-1023 from Arduino) to a range (e.g., 0-200 km)
+        distance_threshold = pot_distance * 200 / 1023
+
+        # Use `volume` and `distance_threshold` in your main logic
+        print(f"Volume: {volume}, Distance Threshold: {distance_threshold}")
+    else:
+        distance_threshold = 200
+        volume = 0.5
+
+    time.sleep(0.5)  # Adjust as needed
     tone_list = []  # List to store tone data (waveform, offset)
     if datetime.now() >= next_reload_time:
+	runpy.run_path(path_name='getData.py')
         debris_data = load_debris_data()
         next_reload_time = datetime.now() + timedelta(days=1)
         print("Reloaded debris data.")
@@ -193,11 +222,11 @@ while True:
                     print("Error encountered " + str(e))
                     
             
-            if distance < 200: #add all objects within 200km of my location
+            if distance < distance_threshold: #add all objects within 200km of my location
                 altitude_km = geocentric.subpoint().elevation.km
                 frequency, pixelbin = altitude_to_pitch_bin(altitude_km)
                 duration, decay_rate = rcs_to_duration_bin(debris.get('RCS_SIZE', 'null'))
-                waveform = generate_tone_with_reverb(frequency, duration, decay_rate)
+                waveform = generate_tone_with_reverb(frequency, duration, decay_rate, volume)
                 offset_by_distance = (distance/200) * 2
                 tone_list.append((waveform, offset_by_distance))  # Add tone with a random offset
                 print(f"{debris.get('OBJECT_ID')} {debris.get('OBJECT_NAME')} - (RCS: {debris.get('RCS_SIZE')} , Altitude: {altitude_km:.0f} km , Distance: {distance:.0f} km)")

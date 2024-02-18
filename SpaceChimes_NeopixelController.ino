@@ -4,7 +4,9 @@
 #define NUM_LEDS    8 // THIS NEEDS TO CHANGE FOR JEWELS
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
-#define POT_PIN     A0 // Potentiometer connected to A0
+#define DIST_POT_PIN     A0 // Potentiometer connected to A0
+#define VOL_POT_PIN     A1
+#define NEO_POT_PIN     A2 
 
 // This is pretty much done - just needs to have updates for groups of 7 pixels when jewels get here
 
@@ -18,10 +20,24 @@ void setup() {
 }
 
 void loop() {
-  // Read potentiometer value and map it to a brightness range
-  int potValue = analogRead(POT_PIN);
-  int brightness = map(potValue, 0, 1023, 0, 255);
-  FastLED.setBrightness(brightness);
+  // Read pots to adjust settings - too complicated reading on pi so just read all pots on arduino and send relevant values to Pi 
+
+  //int potBrightnessValue = analogRead(NEO_POT_PIN);
+  //int potVolumeValue = analogRead(VOL_POT_PIN);
+  //int potDistanceValue = analogRead(DIST_POT_PIN);
+
+  int potVolumeValue = 500;
+  int potDistanceValue = 500;
+
+  // Send the values over serial in a comma-separated format
+  Serial.print(potVolumeValue);
+  Serial.print(",");
+  Serial.println(potDistanceValue);
+
+  //delay(100);
+
+  //int brightness = map(potValue, 0, 1023, 0, 255);
+  FastLED.setBrightness(80);
 
   static uint8_t hue = 0;
   // Update the rainbow cycle for non-highlighted LEDs

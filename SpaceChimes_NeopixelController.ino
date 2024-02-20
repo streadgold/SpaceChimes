@@ -22,12 +22,9 @@ void setup() {
 void loop() {
   // Read pots to adjust settings - too complicated reading on pi so just read all pots on arduino and send relevant values to Pi 
 
-  //int potBrightnessValue = analogRead(NEO_POT_PIN);
-  //int potVolumeValue = analogRead(VOL_POT_PIN);
-  //int potDistanceValue = analogRead(DIST_POT_PIN);
-
-  int potVolumeValue = 500;
-  int potDistanceValue = 500;
+  int potBrightnessValue = analogRead(NEO_POT_PIN);
+  int potVolumeValue = analogRead(VOL_POT_PIN);
+  int potDistanceValue = analogRead(DIST_POT_PIN);
 
   // Send the values over serial in a comma-separated format
   Serial.print(potVolumeValue);
@@ -36,8 +33,8 @@ void loop() {
 
   //delay(100);
 
-  //int brightness = map(potValue, 0, 1023, 0, 255);
-  FastLED.setBrightness(80);
+  int brightness = map(potBrightnessValue, 0, 1023, 0, 255);
+  FastLED.setBrightness(brightness);
 
   static uint8_t hue = 0;
   // Update the rainbow cycle for non-highlighted LEDs

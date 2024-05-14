@@ -247,51 +247,86 @@ def rcs_to_duration_bin(rcs_size):
 next_update_time = datetime.datetime.now()
 written_line = 0
 
-def check_and_update_data():
+def check_and_update_data(force_update=False):
     global next_update_time, written_line
     now = datetime.datetime.now()
-    if now >= next_update_time:
+    if now >= next_update_time or force_update:
         print("updating data")
         subprocess.run(['python', 'acquireData.py'])
-        next_update_time = now + datetime.timedelta(hours=2)
+        debris_data = load_debris_data()
+        print("Data updated and reloaded")
+        next_update_time = now + datetime.timedelta(hours=1)
         screen.clear_display()
         if written_line == 7:
             written_line = 0
         else:
             written_line += 1
-        screen.write_multiline_text("Updating List",written_line)
+        screen.write_multiline_text("Data updated.",written_line)
 
 ts = load.timescale()
 
 def load_debris_data():
-    with open('debris_data.json', 'r') as file:
-        # Load the entire JSON file
-        full_data = json.load(file)
-        # Extract only the 'data' part which contains the debris details
-        debris_data = full_data.get('data', [])  # Default to an empty list if 'data' is not found
+    if os.path.exists('debris_data.json'):
+        with open('debris_data.json', 'r') as file:
+            # Load the entire JSON file
+            full_data = json.load(file)
+            # Extract only the 'data' part which contains the debris details
+            debris_data = full_data.get('data', [])  # Default to an empty list if 'data' is not found
+    else:
+        print("data file missing - forcing update")
+        check_and_update_data(True)
+        with open('debris_data.json', 'r') as file:
+            # Load the entire JSON file
+            full_data = json.load(file)
+            # Extract only the 'data' part which contains the debris details
+            debris_data = full_data.get('data', [])  # Default to an empty list if 'data' is not found
     return debris_data
 
 debris_data = load_debris_data()
 next_reload_time = datetime.datetime.now() + datetime.timedelta(minutes=37)
 
 triggered = False
-oldvolume = 0
+old_volume = 0
+
+def read_average_volume(channel_config, num_samples=10):
+    total_value = 0
+    for _ in range(num_samples):
+        total_value += read_volume(channel_config)
+        time.sleep(0.01)  # short delay between readings
+    average_value = total_value / num_samples
+    return round(average_value, 2)
+
+
+def update_volume_if_significant(old_volume, new_volume, threshold=0.01):
+    if abs(new_volume - old_volume) > threshold:
+        print(f"Volume change significant. Updating from {old_volume} to {new_volume}")
+        return new_volume
+    return old_volume
+
+current_volume = 0
+
+def check_volume_adjustment():
+    global current_volume
+    new_reading = read_average_volume(config_A1)
+    current_volume = update_volume_if_significant(current_volume, new_reading)
+
 
 def check_pass_times(debris_data):
     global triggered_alerts, rcs
-    global triggered, triggered_time, volume, oldvolume, written_line
+    global triggered, triggered_time, current_volume, old_volume, written_line
     
     now = datetime.datetime.utcnow()
     
-    volume = round(read_volume(config_A1),2)
-    if volume != oldvolume:
-        oldvolume = volume
+    check_volume_adjustment()
+
+    if current_volume != old_volume:
+        old_volume = current_volume
         if written_line == 7:
             written_line = 0
         else:
             written_line += 1
-        screen.write_multiline_text(f"Volume: {volume}",written_line)
-        print(f"Volume is now: {volume}")
+        screen.write_multiline_text(f"Volume: {current_volume}",written_line)
+        print(f"Volume is now: {current_volume}")
 
     # First, clear expired entries
     for object_id in list(triggered_alerts.keys()):
@@ -311,8 +346,7 @@ def check_pass_times(debris_data):
             altitude_km = debris['altitude_km']
             frequency, pixelbin = altitude_to_pitch_bin(altitude_km)
             duration, decay_rate = rcs_to_duration_bin(debris['rcs'])
-            waveform = generate_tone_with_reverb(frequency, duration, decay_rate, volume)
-            print(str(pixelbin))
+            waveform = generate_tone_with_reverb(frequency, duration, decay_rate, current_volume)
             if written_line == 7:
                 written_line = 0
             else:
@@ -329,11 +363,24 @@ def check_pass_times(debris_data):
 
 debris_data = load_debris_data()
 
+last_checked_time = 0
+
+def check_file_update(filename, last_checked):
+    new_time = os.path.getmtime(filename)
+    if new_time != last_checked:
+        print("File has been updated.")
+        return load_debris_data(), new_time
+    return None, last_checked
+
+
+
 while True:
+    data, last_checked_time = check_file_update('debris_data.json', last_checked_time)
+    if data:
+        debris_data = data
     check_and_update_data()
     # reset all LEDs - need to modify this since it will be called before the LEDs fade out
     if triggered and (datetime.datetime.now() - triggered_time).total_seconds() > 5:
-        print("reset")
         serial_conn.write(str(999).encode())
         time.sleep(1)
         triggered = False

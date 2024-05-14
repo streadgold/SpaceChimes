@@ -126,7 +126,7 @@ def progress_meter(progress, total):
     percent = 100 * (progress / total)
     bar_length = 40
     filled_length = int(bar_length * progress // total)
-    bar = '█' * filled_length + '-' * (bar_length - filled_length)
+    bar = 'â–ˆ' * filled_length + '-' * (bar_length - filled_length)
     print(f'\rProgress: |{bar}| {percent:.2f}% Complete', end='')
     sys.stdout.flush()
 
@@ -199,12 +199,12 @@ if response.status_code == 200:
             last_updated_str2 = saved_data.get("last_updated", "")
             if last_updated_str2:
                 last_updated2 = datetime.strptime(last_updated_str2, '%Y-%m-%d %H:%M:%S')
-                if datetime.utcnow() - last_updated2 < timedelta(hours=2):
+                if datetime.utcnow() - last_updated2 < timedelta(hours=1):
                     need_new_debris_data = False
                     json_data = saved_data.get("data", [])
                     print("Using cached debris data.")
                 else:
-                    print("Cached debris data is older than two hours so updating.")
+                    print("Cached debris data is older than one hours so updating.")
     if need_new_debris_data:
         print("\n Checking for valid entries in the downloaded data")
         for entry in json_data:

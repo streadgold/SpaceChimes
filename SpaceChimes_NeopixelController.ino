@@ -1,83 +1,97 @@
-#include <FastLED.h>
+#include <Adafruit_NeoPixel.h>
 
-#define LED_PIN     6 // Neopixels connected to D6
-#define NUM_LEDS    8 // THIS NEEDS TO CHANGE FOR JEWELS
-#define LED_TYPE    WS2812B
-#define COLOR_ORDER GRB
-#define DIST_POT_PIN     A0 // Potentiometer connected to A0
-#define VOL_POT_PIN     A1
-#define NEO_POT_PIN     A2 
+#define LED_PIN         6 // Neopixels connected to D6
+#define NUM_LEDS        56
+#define LEDS_PER_CLUSTER 7
+#define NUM_CLUSTERS    (NUM_LEDS / LEDS_PER_CLUSTER)
+#define COLOR_ORDER     NEO_GRBW // Change as necessary
 
-// This is pretty much done - just needs to have updates for groups of 7 pixels when jewels get here
+Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, COLOR_ORDER + NEO_KHZ800);
 
-
-CRGB leds[NUM_LEDS];
-bool highlight[NUM_LEDS] = {false}; // Tracks whether an LED is highlighted
+bool clusterHighlighted[NUM_CLUSTERS] = {false}; // Track which clusters are highlighted
+int fadeValue[NUM_CLUSTERS] = {0}; // Track the fade value for each cluster
+bool fading[NUM_CLUSTERS] = {false}; // Track whether a cluster is currently fading
+unsigned long previousMillis[NUM_CLUSTERS] = {0}; // Track the last update time for each cluster
+const long fadeInterval = 30; // Interval between fade steps in milliseconds
 
 void setup() {
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+  strip.begin();
+  strip.show(); // Initialize all pixels to 'off'
   Serial.begin(9600);
 }
 
 void loop() {
-  // Read pots to adjust settings - too complicated reading on pi so just read all pots on arduino and send relevant values to Pi 
+  int brightness = analogRead(A2); // Assuming potentiometer is connected to A2
+  brightness = map(brightness, 0, 1023, 0, 255);
+  strip.setBrightness(brightness);
 
-  int potBrightnessValue = analogRead(NEO_POT_PIN);
-  int potVolumeValue = analogRead(VOL_POT_PIN);
-  int potDistanceValue = analogRead(DIST_POT_PIN);
-
-  // Send the values over serial in a comma-separated format
-  Serial.print(potVolumeValue);
-  Serial.print(",");
-  Serial.println(potDistanceValue);
-
-  //delay(100);
-
-  int brightness = map(potBrightnessValue, 0, 1023, 0, 255);
-  FastLED.setBrightness(brightness);
-
+  // Apply a rotating rainbow effect to non-highlighted clusters
   static uint8_t hue = 0;
-  // Update the rainbow cycle for non-highlighted LEDs
-  for (int i = 0; i < NUM_LEDS; i++) {
-    if (!highlight[i]) { // Only update if not highlighted
-      leds[i] = CHSV((hue + i * 10) % 255, 255, 255); // Adjust '10' to change the rainbow spread
+  for (int cluster = 0; cluster < NUM_CLUSTERS; cluster++) {
+    if (!clusterHighlighted[cluster] && !fading[cluster]) {
+      int clusterHue = (hue + cluster * 36) % 256; // Increment hue by cluster
+      uint32_t color = strip.ColorHSV(clusterHue * 65536 / 256, 255, 255); // RGB only, no white component
+      for (int i = cluster * LEDS_PER_CLUSTER; i < (cluster + 1) * LEDS_PER_CLUSTER; i++) {
+        strip.setPixelColor(i, color);
+      }
     }
   }
-  FastLED.show();
+  strip.show();
   hue++;
 
-  // Check for serial input
-  if (Serial.available()) {
-    String inputString = Serial.readStringUntil('\n'); // Read the input until newline
-    inputString.trim(); // Remove any whitespace
-    if (inputString.length() > 0) { // Check if the string is not empty
-      if (inputString == "999") { // Reset command
-        fadeOutHighlighted();
-        for (int i = 0; i < NUM_LEDS; i++) {
-          highlight[i] = false; // After fading, reset all LEDs to rainbow
-        }
-      } else {
-        int input = inputString.toInt(); // Convert string to integer for LED index
-        if (input >= 0 && input < NUM_LEDS) {
-          highlight[input] = true; // Highlight the specified LED
-          leds[input] = CRGB::White;
-          FastLED.show();
-        }
-      }
+  // Check for incoming serial data
+  int incomingByte = Serial.read();
+  if (incomingByte != -1) {
+    if (incomingByte == 'r') { // Reset command
+      startFadeOut();
+    } else if (incomingByte >= '0' && incomingByte < ('0' + NUM_CLUSTERS)) {
+      int clusterIndex = incomingByte - '0';
+      highlightCluster(clusterIndex);
     }
   }
 
-  delay(10); // Adjust for speed of the rainbow cycle
+  // Update fading clusters
+  updateFadeOut();
 }
 
-void fadeOutHighlighted() {
-  for (int fadeValue = 255; fadeValue >= 0; fadeValue -= 5) { // Fade out value
-    for (int i = 0; i < NUM_LEDS; i++) {
-      if (highlight[i]) {
-        leds[i] = CRGB(fadeValue, fadeValue, fadeValue); // Apply fade
+void highlightCluster(int clusterIndex) {
+  clusterHighlighted[clusterIndex] = true;
+  fading[clusterIndex] = false;
+  fadeValue[clusterIndex] = 255;
+  int startIndex = clusterIndex * LEDS_PER_CLUSTER;
+  for (int i = startIndex; i < startIndex + LEDS_PER_CLUSTER; i++) {
+    strip.setPixelColor(i, strip.Color(255, 255, 255, 0)); // RGB with no White
+  }
+  strip.show();
+}
+
+void startFadeOut() {
+  for (int cluster = 0; cluster < NUM_CLUSTERS; cluster++) {
+    if (clusterHighlighted[cluster]) {
+      fading[cluster] = true;
+      previousMillis[cluster] = millis();
+    }
+  }
+}
+
+void updateFadeOut() {
+  unsigned long currentMillis = millis();
+  for (int cluster = 0; cluster < NUM_CLUSTERS; cluster++) {
+    if (fading[cluster]) {
+      if (currentMillis - previousMillis[cluster] >= fadeInterval) {
+        previousMillis[cluster] = currentMillis;
+        fadeValue[cluster] -= 5;
+        if (fadeValue[cluster] <= 0) {
+          fadeValue[cluster] = 0;
+          fading[cluster] = false;
+          clusterHighlighted[cluster] = false;
+        }
+        int startIndex = cluster * LEDS_PER_CLUSTER;
+        for (int i = startIndex; i < startIndex + LEDS_PER_CLUSTER; i++) {
+          strip.setPixelColor(i, strip.Color(fadeValue[cluster], fadeValue[cluster], fadeValue[cluster], 0));
+        }
+        strip.show();
       }
     }
-    FastLED.show();
-    delay(30); // Delay for fade effect, adjust for faster/slower fade
   }
 }

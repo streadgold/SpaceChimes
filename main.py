@@ -381,7 +381,7 @@ while True:
     check_and_update_data()
     # reset all LEDs - need to modify this since it will be called before the LEDs fade out
     if triggered and (datetime.datetime.now() - triggered_time).total_seconds() > 5:
-        serial_conn.write(str(999).encode())
+        serial_conn.write(str("r").encode())
         time.sleep(1)
         triggered = False
     

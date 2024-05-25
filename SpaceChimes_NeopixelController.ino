@@ -13,6 +13,7 @@ int fadeValue[NUM_CLUSTERS] = {0}; // Track the fade value for each cluster
 bool fading[NUM_CLUSTERS] = {false}; // Track whether a cluster is currently fading
 unsigned long previousMillis[NUM_CLUSTERS] = {0}; // Track the last update time for each cluster
 const long fadeInterval = 30; // Interval between fade steps in milliseconds
+const long rainbowInterval = 10; // Interval between hue updates in milliseconds
 
 void setup() {
   strip.begin();
@@ -27,6 +28,14 @@ void loop() {
 
   // Apply a rotating rainbow effect to non-highlighted clusters
   static uint8_t hue = 0;
+  static unsigned long lastRainbowUpdate = 0;
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - lastRainbowUpdate >= rainbowInterval) {
+    lastRainbowUpdate = currentMillis;
+    hue++;
+  }
+
   for (int cluster = 0; cluster < NUM_CLUSTERS; cluster++) {
     if (!clusterHighlighted[cluster] && !fading[cluster]) {
       int clusterHue = (hue + cluster * 36) % 256; // Increment hue by cluster
@@ -37,7 +46,6 @@ void loop() {
     }
   }
   strip.show();
-  hue++;
 
   // Check for incoming serial data
   int incomingByte = Serial.read();

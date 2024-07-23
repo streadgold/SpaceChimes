@@ -255,7 +255,7 @@ def check_and_update_data(force_update=False):
         subprocess.run(['python', 'acquireData.py'])
         debris_data = load_debris_data()
         print("Data updated and reloaded")
-        next_update_time = now + datetime.timedelta(hours=1)
+        next_update_time = now + datetime.timedelta(hours=24)
         screen.clear_display()
         if written_line == 7:
             written_line = 0

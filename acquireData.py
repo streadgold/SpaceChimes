@@ -96,31 +96,28 @@ def next_pass_details(tle_line1, tle_line2, observer_location):
     observer = Topos(latitude_degrees=observer_location[0], longitude_degrees=observer_location[1])
 
     start_time = ts.now()
-    end_time = start_time + 1.0  # Look 24 hours ahead
+    end_time = start_time + timedelta(days=1)  # Look 24 hours ahead
 
-    # Initialize variables
-    pass_start = pass_end = culmination_time = None
-    altitude_km = -1  # Use -1 or another sentinel value indicating "not set"
+    pass_events = []  # List to hold all pass details
 
     times, events = satellite.find_events(observer, start_time, end_time, altitude_degrees=0.0)
     for time, event in zip(times, events):
         if event == 1:  # Culmination
-            culmination_time = time
             geocentric = satellite.at(time)
             subpoint = geocentric.subpoint()
-            altitude_km = subpoint.elevation.km  # This gives the altitude above Earth's surface in kilometers
+            altitude_km = subpoint.elevation.km  # Altitude above Earth's surface in kilometers
             observer_location = (observer.latitude.degrees, observer.longitude.degrees)
             subsatellite_point = (subpoint.latitude.degrees, subpoint.longitude.degrees)
             distance_km = geodesic(observer_location, subsatellite_point).km
-            if distance_km > radius: #exclude satellites too far away
-                return None
-
-            return {
-                'culmination_time': culmination_time.utc_strftime('%Y-%m-%d %H:%M:%S'),
+            if distance_km > radius:  # Exclude satellites too far away
+                continue
+            pass_events.append({
+                'culmination_time': time.utc_strftime('%Y-%m-%d %H:%M:%S'),
                 'altitude_km': altitude_km,
                 'distance_km': distance_km
-            }
-    return None
+            })
+
+    return pass_events
 
 def progress_meter(progress, total):
     percent = 100 * (progress / total)
@@ -244,15 +241,17 @@ if response.status_code == 200:
             tle_line2 = debris.get('TLE_LINE2')
             if tle_line1 and tle_line2:
                 pass_details = next_pass_details(tle_line1, tle_line2, my_location)
+
                 if pass_details:
-                    filtered_pass_data.append({
-                        'object_id': debris.get('OBJECT_ID'),
-                        'object_name': debris.get('OBJECT_NAME'),
-                        'rcs': debris.get('RCS_SIZE'),  # Assuming RCS_SIZE is the correct field for radar cross-section
-                        'culmination_time': pass_details['culmination_time'],
-                        'altitude_km': pass_details['altitude_km'],
-                        'distance_km': pass_details['distance_km']
-                    })
+                    for pass_event in pass_details:
+                        filtered_pass_data.append({
+                            'object_id': debris.get('OBJECT_ID'),
+                            'object_name': debris.get('OBJECT_NAME'),
+                            'rcs': debris.get('RCS_SIZE'),  # Assuming RCS_SIZE is the correct field for radar cross-section
+                            'culmination_time': pass_event['culmination_time'],
+                            'altitude_km': pass_event['altitude_km'],
+                            'distance_km': pass_event['distance_km']
+                        })
                 else:
                     log_exclusion("Missing pass data", debris)
                     continue
